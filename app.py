@@ -395,41 +395,48 @@ def page_loan():
             # グラフ用（解いた L_req で系列描画）
             L_eff, PMT_eff, r_eff, n_eff = L_req, PMT, r_m, n
 
+        #-----------------------------------------------------------------------------------------------------------
         elif solve == "years":
             if L <= 0 or PMT <= 0:
                 flash("借入金額と月額返済額は正の値を指定してください。", "danger")
                 return redirect(url_for("page_loan"))
+
             if r_m == 0.0:
                 # B = L - PMT*n  ⇒  n = (L - B)/PMT
                 if L <= B:
                     flash("無利子では残存元本が大きすぎます（返済が成立しません）。", "warning")
                     return redirect(url_for("page_loan"))
-                n_req = int(round((L - B) / PMT))
+                n_real = (L - B) / PMT
             else:
                 if 1.0 + r_m <= 0.0:
                     flash("金利が不正です。", "danger")
                     return redirect(url_for("page_loan"))
-                from math import log, log1p
-                # 解析解：inv = (rL - PMT) / (rB - PMT) かつ inv=(1+r)^(-n)
-                num = r_m * L - PMT
-                den = r_m * B - PMT
-                if den == 0 or num <= 0 or den <= 0:
+
+                from math import log, log1p, isfinite
+
+                # (1+i)^n = (B - PMT/i) / (L - PMT/i)
+                i = r_m
+                denom = (L - PMT / i)   # 分母が負でも比が正なら解は成立
+                if abs(denom) < 1e-15:
+                    flash("返済条件が成立しません（PMTが金利相当と一致）。", "warning")
+                    return redirect(url_for("page_loan"))
+
+                rhs = (B - PMT / i) / denom  # 右辺 = (1+i)^n
+                if rhs <= 0.0:
                     flash("その条件では返済年数の解が見つかりません。パラメータを見直してください。", "warning")
                     return redirect(url_for("page_loan"))
-                inv = num / den
-                if inv <= 0:
-                    flash("計算が不安定です。入力値を見直してください。", "warning")
-                    return redirect(url_for("page_loan"))
-                n_real = - log(inv) / log1p(r_m)
-                if not isfinite(n_real) or n_real < 0:
-                    flash("計算が不安定です。入力値を見直してください。", "warning")
-                    return redirect(url_for("page_loan"))
-                n_req = int(round(n_real))
 
+                n_real = log(rhs) / log1p(i)   # n = ln(rhs) / ln(1+i)
+                if (not isfinite(n_real)) or n_real < 0:
+                    flash("計算が不安定です。入力値を見直してください。", "warning")
+                    return redirect(url_for("page_loan"))
+
+            n_req = int(round(n_real))
             result = {"solve": solve, "months": n_req, "years": round(n_req / 12.0, 3)}
+
             # グラフ用（解いた n_req で系列描画）
             L_eff, PMT_eff, r_eff, n_eff = L, PMT, r_m, n_req
-
+        #-------------------------------------------------------------------------------------------------------------------
         elif solve == "rate":
             if L <= 0 or PMT <= 0 or n <= 0:
                 flash("借入金額・返済年数・月額返済額は正の値を指定してください。", "danger")
@@ -654,39 +661,59 @@ def page_drawdown():
             result = {"solve": solve, "residual": round(B_req, 2), "n": n}
 
             PV_eff, WD_eff, n_eff, r_eff, due_eff = PV, WD, n, r, due_begin
-
+        #----------------------------------------------------------------------------------------------------------------
         elif solve == "years":
+            # 取崩して B に到達するまでの「月数 n」を解く
+            # モデル：期末払い(annuity-immediate)、期首払いのときは due_begin=True
+            # 一般式（r>0）：
+            #   B = (PV - A) * (1+r)^n + A
+            # ここで A = WD * ((1+r) if due_begin else 1) / r
+            # したがって (1+r)^n = (B - A) / (PV - A) で、rhs>0 が解の必要十分条件（分母の符号は不問）
+
             if WD <= 0:
                 flash("取崩月額は正の値で入力してください。", "danger")
                 return render_template("drawdown.html", result=None)
+
+            from math import log, log1p, isfinite
+
             if r == 0.0:
+                # 金利ゼロ：PV - WD*n = B  →  n = (PV - B)/WD
                 n_real = (PV - B) / WD
                 if n_real < 0 or not isfinite(n_real):
                     flash("その条件では到達できません。", "warning")
                     return render_template("drawdown.html", result=None)
                 n_req = max(0, int(round(n_real)))
             else:
-                # 解析解で (1+r)^n = X を解き、n = log(X)/log(1+r)
-                A   = WD * ((1.0 + r) if due_begin else 1.0) / r
-                num = (B - A)
-                den = (PV - A)
-                if den == 0.0 or num <= 0.0 or den <= 0.0:
+                if 1.0 + r <= 0.0:
+                    flash("金利が不正です。", "danger")
+                    return render_template("drawdown.html", result=None)
+
+                # A: 年金現価係数の転置項（期首払い対応）
+                A = WD * ((1.0 + r) if due_begin else 1.0) / r
+
+                denom = (PV - A)               # 分母が負でもOK（比が正なら可）
+                if abs(denom) < 1e-15:
+                    flash("条件が特異です（PMT が金利相当と一致）。", "warning")
+                    return render_template("drawdown.html", result=None)
+
+                rhs = (B - A) / denom          # = (1+r)^n
+                if rhs <= 0.0 or not isfinite(rhs):
                     flash("その条件では到達できません（パラメータを見直してください）。", "warning")
                     return render_template("drawdown.html", result=None)
-                X = num / den
-                if X <= 0.0 or not isfinite(X):
-                    flash("計算が不安定です。入力値を見直してください。", "warning")
-                    return render_template("drawdown.html", result=None)
-                n_real = log(X) / log1p(r)
+
+                n_real = log(rhs) / log1p(r)   # n = ln(rhs)/ln(1+r)
                 if n_real < 0 or not isfinite(n_real):
                     flash("計算が不安定です。入力値を見直してください。", "warning")
                     return render_template("drawdown.html", result=None)
+
                 n_req = max(0, int(round(n_real)))
 
             result = {"solve": solve, "months": n_req, "years": round(n_req / 12.0, 3)}
 
+            # グラフ用（解いた n_req で系列描画）
             PV_eff, WD_eff, n_eff, r_eff, due_eff = PV, WD, n_req, r, due_begin
 
+        #-----------------------------------------------------------------------------------------------------------------
         elif solve == "rate":
             if WD <= 0 or n <= 0:
                 flash("取崩月額と取崩年数は正の値を入力してください。", "danger")
