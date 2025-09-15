@@ -10,14 +10,11 @@
 <body>
 <nav class="navbar navbar-expand-lg navbar-light bg-light border-bottom">
   <div class="container">
-    <a class="navbar-brand fw-bold" href="{{ url_for('home') }}">金融電卓</a>
+    <a class="navbar-brand fw-bold" href="{{ url_for('home') }}">投資シミュレーション </a>
     <div>
-      <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('page_fv') }}">将来価値</a>
-      <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('page_pv') }}">現在価値</a>
-      <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('page_rate') }}">金利を求める</a>
-      <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('page_years') }}">運用年数</a>
-      <!-- ★ 追加：PMT（毎月の積立額） -->
-      <a class="btn btn-sm btn-primary" href="{{ url_for('page_pmt') }}">毎月の積立額</a>
+      <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('page_savings') }}">貯蓄計算</a>
+      <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('page_loan') }}">ローン計算</a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('page_drawdown') }}">年金計算</a>
     </div>
   </div>
 </nav>

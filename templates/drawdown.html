@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}年金取崩し（1項目を解く） | 金融電卓{% endblock %}
+{% block content %}
+  {% set solve_val = request.form.get('solve', 'withdrawal') %}
+  {% set due_val = request.form.get('due', 'end') %}
+  <h1 class="mb-3">年金取崩し（1項目を解く）</h1>
+  <p class="text-muted">現在の貯蓄を運用しながら毎月取り崩す場合、5項目のうち1つを計算します。</p>
+
+  <form method="post" class="row g-3">
+    <div class="col-12">
+      <label class="form-label d-block">どれを求めますか？</label>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="solve" id="solve_withdrawal" value="withdrawal"
+               {% if solve_val == 'withdrawal' %}checked{% endif %}>
+        <label class="form-check-label" for="solve_withdrawal">取崩月額（WD）</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="solve" id="solve_pv" value="pv"
+               {% if solve_val == 'pv' %}checked{% endif %}>
+        <label class="form-check-label" for="solve_pv">貯蓄額（PV）</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="solve" id="solve_residual" value="residual"
+               {% if solve_val == 'residual' %}checked{% endif %}>
+        <label class="form-check-label" for="solve_residual">残存金額（B）</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="solve" id="solve_years" value="years"
+               {% if solve_val == 'years' %}checked{% endif %}>
+        <label class="form-check-label" for="solve_years">取崩年数</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="solve" id="solve_rate" value="rate"
+               {% if solve_val == 'rate' %}checked{% endif %}>
+        <label class="form-check-label" for="solve_rate">運用利回り（年率）</label>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">貯蓄額（PV, 円）</label>
+      <input name="pv" type="text" class="form-control" placeholder="例: 20,000,000"
+             value="{{ request.form.get('pv','') }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">取崩年数（年）</label>
+      <input name="years" type="text" class="form-control" placeholder="例: 25"
+             value="{{ request.form.get('years','') }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">取崩月額（WD, 円）</label>
+      <input name="withdrawal" type="text" class="form-control" placeholder="例: 120,000"
+             value="{{ request.form.get('withdrawal','') }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">最終残存金額（B, 円）</label>
+      <input name="residual" type="text" class="form-control" placeholder="例: 5,000,000"
+             value="{{ request.form.get('residual','') }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">運用利回り（年率, ％）</label>
+      <input name="annual" type="text" class="form-control" placeholder="例: 2.0"
+             value="{{ request.form.get('annual','') }}">
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label d-block">取崩タイミング</label>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="due" id="due_end" value="end"
+               {% if due_val == 'end' %}checked{% endif %}>
+        <label class="form-check-label" for="due_end">月末（後払い）</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="due" id="due_begin" value="begin"
+               {% if due_val == 'begin' %}checked{% endif %}>
+        <label class="form-check-label" for="due_begin">月初（先払い）</label>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <button type="submit" class="btn btn-primary">計算する</button>
+      <a href="{{ url_for('home') }}" class="btn btn-outline-secondary">TOPへ</a>
+    </div>
+  </form>
+
+  {% if result %}
+    <hr class="my-4">
+    {% if result.solve == 'withdrawal' %}
+      <div class="alert alert-success">
+        <div class="fw-bold">必要な取崩月額</div>
+        <div class="fs-4 mt-1">¥{{ "{:,.2f}".format(result.withdrawal) }}</div>
+        <div class="text-muted small mt-2">取崩月数：{{ result.n }} ヶ月</div>
+      </div>
+    {% elif result.solve == 'pv' %}
+      <div class="alert alert-success">
+        <div class="fw-bold">必要な貯蓄額（初期元本）</div>
+        <div class="fs-4 mt-1">¥{{ "{:,.2f}".format(result.pv) }}</div>
+        <div class="text-muted small mt-2">取崩月数：{{ result.n }} ヶ月</div>
+      </div>
+    {% elif result.solve == 'residual' %}
+      <div class="alert alert-success">
+        <div class="fw-bold">最終残存金額</div>
+        <div class="fs-4 mt-1">¥{{ "{:,.2f}".format(result.residual) }}</div>
+        <div class="text-muted small mt-2">取崩月数：{{ result.n }} ヶ月</div>
+      </div>
+    {% elif result.solve == 'years' %}
+      <div class="alert alert-success">
+        <div class="fw-bold">必要な取崩期間</div>
+        <div class="fs-5 mt-1">{{ result.months }} ヶ月（約 {{ result.years }} 年）</div>
+      </div>
+    {% elif result.solve == 'rate' %}
+      <div class="alert alert-success">
+        <div class="fw-bold">必要な運用利回り</div>
+        <div class="mt-1">年率：約 <span class="fs-5">{{ result.annual_rate_pct }} %</span></div>
+        <div class="text-muted small mt-1">月利：約 {{ result.monthly_rate_pct }} %</div>
+      </div>
+    {% endif %}
+  {% endif %}
+{% endblock %}

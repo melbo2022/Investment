@@ -4,57 +4,41 @@
   <h1 class="mb-3">何を求めますか？</h1>
   <p class="text-muted">目的を選択すると、対応する計算ページが開きます。</p>
 
-  <div class="row g-3">
+   <!-- 積立計算カード -->
+  <div class="col-md-6">
+  <div class="card h-100 shadow-sm">
+    <div class="card-body">
+      <h5 class="card-title">貯蓄（1項目を解く）</h5>
+      <p class="card-text small">FV・PV・PMT・年数・金利のうち1つを計算します。</p>
+      <a href="{{ url_for('page_savings') }}" class="btn btn-primary">開く</a>
+    </div>
+  </div>
+</div>
+
+  
+     <!-- ローン計算カード -->
     <div class="col-md-6">
       <div class="card h-100 shadow-sm">
         <div class="card-body">
-          <h5 class="card-title">将来価値（FV）</h5>
-          <p class="card-text small">現在貯蓄額・毎月積立額・運用年数・年率から、将来いくらになるかを計算。</p>
-          <a href="{{ url_for('page_fv') }}" class="btn btn-primary">開く</a>
+          <h5 class="card-title">ローン計算（1項目を解く）</h5>
+          <p class="card-text small">借入金額・返済年数・月額返済額・金利のうち1つを求めます（元利均等返済）。</p>
+          <a href="{{ url_for('page_loan') }}" class="btn btn-primary">開く</a>
         </div>
       </div>
     </div>
 
+      <!-- 年金計算カード -->
     <div class="col-md-6">
       <div class="card h-100 shadow-sm">
         <div class="card-body">
-          <h5 class="card-title">現在価値（PV 必要額）</h5>
-          <p class="card-text small">目標の将来額に到達するために、今いくら必要かを計算。</p>
-          <a href="{{ url_for('page_pv') }}" class="btn btn-primary">開く</a>
+          <h5 class="card-title">年金取崩し（1項目を解く）</h5>
+          <p class="card-text small">貯蓄額・取崩月額・残存額・利回り・年数のうち1つを計算します。</p>
+          <a href="{{ url_for('page_drawdown') }}" class="btn btn-primary">開く</a>
         </div>
       </div>
     </div>
 
-    <div class="col-md-6">
-      <div class="card h-100 shadow-sm">
-        <div class="card-body">
-          <h5 class="card-title">金利（年率）を求める</h5>
-          <p class="card-text small">目標の将来額に到達するために必要な年率を、数値計算で求めます。</p>
-          <a href="{{ url_for('page_rate') }}" class="btn btn-primary">開く</a>
-        </div>
-      </div>
-    </div>
 
-    <div class="col-md-6">
-      <div class="card h-100 shadow-sm">
-        <div class="card-body">
-          <h5 class="card-title">運用年数を求める</h5>
-          <p class="card-text small">目標の将来額に到達するまでに必要な年数（月数）を求めます。</p>
-          <a href="{{ url_for('page_years') }}" class="btn btn-primary">開く</a>
-        </div>
-      </div>
-    </div>
 
-    <!-- ★ 追加：毎月の積立額（PMT） -->
-    <div class="col-md-6">
-      <div class="card h-100 shadow-sm">
-        <div class="card-body">
-          <h5 class="card-title">毎月の積立額（PMT）を求める</h5>
-          <p class="card-text small">目標の将来額に到達するために必要な毎月の積立額を計算。</p>
-          <a href="{{ url_for('page_pmt') }}" class="btn btn-primary">開く</a>
-        </div>
-      </div>
-    </div>
-    <!-- ★ ここまで -->
   </div>
 {% endblock %}
