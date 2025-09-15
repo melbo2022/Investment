@@ -65,6 +65,43 @@ def bisection_solve(func, lo, hi, tol=1e-10, max_iter=200):
             f_lo = f_mid
     return (lo + hi) / 2
 
+# ---------- 共通：グラフ用ヘルパ ----------
+
+def downsample_yearly(series):
+    """年次（12ヶ月ごと）に間引き。index=0（初期値）を含む。端数月があれば末尾も追加。"""
+    out = [series[i] for i in range(0, len(series), 12)]
+    if (len(series) - 1) % 12 != 0:
+        out.append(series[-1])
+    return out
+
+def build_balance_series_savings(pv0: float, pmt: float, r_m: float, n: int, due_begin: bool):
+    """
+    貯蓄の月次残高系列を返す。index=0 が初期残高（月0）。
+    期末拠出（end） : S_{k+1} = S_k*(1+r) + PMT
+    期首拠出（begin）: S_{k+1} = (S_k + PMT)*(1+r)
+    """
+    series = [max(0.0, pv0)]
+    S = pv0
+    for _ in range(n):
+        if due_begin:
+            S = (S + pmt) * (1.0 + r_m)
+        else:
+            S = S * (1.0 + r_m) + pmt
+        series.append(S)
+    return series
+
+def build_balance_series_loan(L0: float, PMT: float, r_m: float, n: int):
+    """
+    ローンの月次残高系列（元利均等・期末払い）。
+    期末払い：S_{k+1} = S_k*(1+r) - PMT
+    """
+    series = [max(0.0, L0)]
+    S = L0
+    for _ in range(n):
+        S = S * (1.0 + r_m) - PMT
+        series.append(S)
+    return series
+
 # ---------- Routes ----------
 
 @app.route("/")
@@ -87,6 +124,11 @@ def page_savings():
     """
 
     result = None
+    # グラフ用効果的パラメータを入れる箱（POST時に埋める）
+    PV_eff = PMT_eff = r_eff = None
+    n_eff = 0
+    due_eff = False
+
     if request.method == "POST":
         solve   = (request.form.get("solve") or "fv").strip()
 
@@ -128,6 +170,9 @@ def page_savings():
             fv = fv_total(pv, pmt, r_m, n, due)
             result = {"solve": solve, "fv": round(fv, 2), "months": n}
 
+            # グラフ用
+            PV_eff, PMT_eff, r_eff, n_eff, due_eff = pv, pmt, r_m, n, due
+
         elif solve == "pv":
             # 目標FVに必要な現在元本PV
             if years < 0:
@@ -138,6 +183,9 @@ def page_savings():
             denom = (1 + r_m) ** n if n > 0 else 1.0
             pv_req = (target_fv - fvP) / denom
             result = {"solve": solve, "pv": round(pv_req, 2), "months": n}
+
+            # グラフ用（解いた pv_req を初期元本にして系列描画）
+            PV_eff, PMT_eff, r_eff, n_eff, due_eff = pv_req, pmt, r_m, n, due
 
         elif solve == "pmt":
             # 目標FVに必要な毎月積立額PMT
@@ -157,6 +205,9 @@ def page_savings():
             fv_pv = fv_lump_sum(pv, r_m, n)
             pmt_req = (target_fv - fv_pv) / denom
             result = {"solve": solve, "pmt": round(pmt_req, 2), "months": n}
+
+            # グラフ用（解いた pmt_req を毎月拠出にして系列描画）
+            PV_eff, PMT_eff, r_eff, n_eff, due_eff = pv, pmt_req, r_m, n, due
 
         elif solve == "years":
             # 目標FVに到達するまでの年数
@@ -191,6 +242,9 @@ def page_savings():
             years_needed = n_sol / 12.0
             result = {"solve": solve, "months": n_sol, "years": round(years_needed, 3)}
 
+            # グラフ用（解いた n_sol を使用）
+            PV_eff, PMT_eff, r_eff, n_eff, due_eff = pv, pmt, r_m, n_sol, due
+
         elif solve == "rate":
             # 必要な年率（%）を解く（r_m を数値解 → 年率へ変換）
             if n <= 0:
@@ -212,9 +266,27 @@ def page_savings():
                     "monthly_rate_pct": round(r_m_sol * 100.0, 6),
                     "months": n,
                 }
+                # グラフ用（解いた r_m_sol を使用）
+                PV_eff, PMT_eff, r_eff, n_eff, due_eff = pv, pmt, r_m_sol, n, due
 
         else:
             flash("解く対象（どれを求めるか）を選択してください。", "danger")
+
+        # ---- 共通：グラフ用データを作成して result に添付 ----
+        if result is not None:
+            try:
+                if n_eff > 0:
+                    series_m = build_balance_series_savings(PV_eff or 0.0, PMT_eff or 0.0, r_eff or 0.0, n_eff, due_eff or False)
+                    series_y = downsample_yearly(series_m)
+                    labels_y = [f"{i}年" for i in range(len(series_y))]
+                    result["chart_labels"] = labels_y
+                    result["chart_data"]   = [round(x, 2) for x in series_y]
+                else:
+                    result["chart_labels"] = []
+                    result["chart_data"]   = []
+            except Exception:
+                result["chart_labels"] = []
+                result["chart_data"]   = []
 
     return render_template("savings.html", result=result)
 
@@ -238,6 +310,11 @@ def page_loan():
          r=0 のとき PMT = (L - B)/n
     """
     result = None
+
+    # グラフ用の効果的パラメータ（POSTで埋める）
+    L_eff = PMT_eff = r_eff = None
+    n_eff = 0
+
     if request.method == "POST":
         solve   = (request.form.get("solve") or "payment").strip()
 
@@ -292,6 +369,8 @@ def page_loan():
                 flash("計算が不安定か、条件が不成立です（残存元本が大きすぎる等）。", "warning")
             else:
                 result = {"solve": solve, "monthly_payment": round(p, 2), "n": n}
+                # グラフ用
+                L_eff, PMT_eff, r_eff, n_eff = L, p, r_m, n
 
         elif solve == "amount":
             if n <= 0 or PMT <= 0:
@@ -313,6 +392,8 @@ def page_loan():
                 # L = B*inv + PMT * (1 - inv)/r
                 L_req = B * inv + PMT * (1.0 - inv) / r_m
             result = {"solve": solve, "loan_amount": round(L_req, 2), "n": n}
+            # グラフ用（解いた L_req で系列描画）
+            L_eff, PMT_eff, r_eff, n_eff = L_req, PMT, r_m, n
 
         elif solve == "years":
             if L <= 0 or PMT <= 0:
@@ -332,19 +413,22 @@ def page_loan():
                 # 解析解：inv = (rL - PMT) / (rB - PMT) かつ inv=(1+r)^(-n)
                 num = r_m * L - PMT
                 den = r_m * B - PMT
-                if den == 0.0 or num <= 0.0 or den <= 0.0:
-                    flash("その条件では返済が成立しません（月額が小さすぎる等）。", "warning")
+                if den == 0 or num <= 0 or den <= 0:
+                    flash("その条件では返済年数の解が見つかりません。パラメータを見直してください。", "warning")
                     return redirect(url_for("page_loan"))
                 inv = num / den
-                if inv <= 0.0:
-                    flash("その条件では返済が成立しません。", "warning")
+                if inv <= 0:
+                    flash("計算が不安定です。入力値を見直してください。", "warning")
                     return redirect(url_for("page_loan"))
-                n_real = -log(inv) / log1p(r_m)
-                if n_real < 0 or not isfinite(n_real):
+                n_real = - log(inv) / log1p(r_m)
+                if not isfinite(n_real) or n_real < 0:
                     flash("計算が不安定です。入力値を見直してください。", "warning")
                     return redirect(url_for("page_loan"))
                 n_req = int(round(n_real))
+
             result = {"solve": solve, "months": n_req, "years": round(n_req / 12.0, 3)}
+            # グラフ用（解いた n_req で系列描画）
+            L_eff, PMT_eff, r_eff, n_eff = L, PMT, r_m, n_req
 
         elif solve == "rate":
             if L <= 0 or PMT <= 0 or n <= 0:
@@ -356,6 +440,8 @@ def page_loan():
             if r_m == 0.0 and abs(PMT - pmt_r0) < 1e-12:
                 # 既に年率0%の解
                 result = {"solve": solve, "monthly_rate_pct": 0.0, "annual_rate_pct": 0.0}
+                # グラフ用
+                L_eff, PMT_eff, r_eff, n_eff = L, PMT, 0.0, n
                 return render_template("loan.html", result=result)
 
             def safe_f(r):
@@ -405,41 +491,114 @@ def page_loan():
                     "monthly_rate_pct": round(r_sol * 100.0, 6),
                     "annual_rate_pct": round(annual_pct, 6),
                 }
+                # グラフ用（解いた r_sol）
+                L_eff, PMT_eff, r_eff, n_eff = L, PMT, r_sol, n
         else:
             flash("解く対象（どれを求めるか）を選択してください。", "danger")
+
+        # ---- 共通：グラフ用データを作成して result に添付 ----
+        if result is not None:
+            try:
+                if n_eff > 0 and L_eff is not None and PMT_eff is not None and r_eff is not None:
+                    series_m = build_balance_series_loan(L_eff, PMT_eff, r_eff, n_eff)
+                    series_y = downsample_yearly(series_m)
+                    labels_y = [f"{i}年" for i in range(len(series_y))]
+                    result["chart_labels"] = labels_y
+                    # ローン残高はマイナス方向に振れることがあるため、見栄え上0未満は0に丸める
+                    result["chart_data"]   = [round(x if x >= 0 else 0.0, 2) for x in series_y]
+                else:
+                    result["chart_labels"] = []
+                    result["chart_data"]   = []
+            except Exception:
+                result["chart_labels"] = []
+                result["chart_data"]   = []
 
     return render_template("loan.html", result=result)
 
 #---------------------------------------------------------------------------------------------------------------------------
 # --- Drawdown (annuity decumulation) Solver page ---
+# --- Drawdown (annuity decumulation) Solver page ---
 @app.route("/drawdown", methods=["GET", "POST"])
 def page_drawdown():
     """
     現在の貯蓄（PV）を運用しながら毎月取り崩し（WD）たとき、
-    5つ（貯蓄額PV / 取崩月額WD / 残存額B / 年金運用利回りannual / 取崩年数years）のうち1つを求める。
-    月利 r、月数 n、支払タイミング due: 'end'（月末/後払い） or 'begin'（月初/先払い）
+    5つ（PV / WD / 残存額B / 年率annual / 取崩年数years）のうち1つを求める。
+    支払タイミング: 'end'（月末/後払い） or 'begin'（月初/先払い）
 
-    基本式（一般形）:
-      期末残高 B = PV*(1+r)^n - WD * AF(r, n, due)
-      ただし AF(r, n, end)   = ((1+r)^n - 1) / r
-            AF(r, n, begin) = AF(r, n, end) * (1+r)
-      r=0 のとき AF = n（begin/end の差は消える）
+    基本式（期末払い）:
+      B = PV*(1+r)^n - WD * AF(r,n,end)
+      AF(r,n,end)   = ((1+r)^n - 1)/r
+      AF(r,n,begin) = AF(r,n,end) * (1+r)
+      r=0 のとき AF = n
     """
     from math import isfinite, log1p, exp, log
 
     result = None
-    if request.method == "POST":
-        solve   = (request.form.get("solve") or "withdrawal").strip()
 
-        PV      = parse_float(request.form.get("pv", "0"))           # 貯蓄額（初期元本）
-        WD      = parse_float(request.form.get("withdrawal", "0"))   # 取崩月額
-        years   = parse_float(request.form.get("years", "0"))        # 取崩年数
-        annual  = parse_float(request.form.get("annual", "0"))       # 年金運用利回り（年率%）
-        B       = parse_float(request.form.get("residual", "0"))     # 最終残存金額
-        due_str = (request.form.get("due") or "end").strip()
+    # ---- ヘルパ ----
+    def annuity_factor(r_, n_, due_begin_):
+        """AF(r,n,due): 将来価値換算の年金係数。None は計算不能域。"""
+        if n_ <= 0:
+            return 0.0
+        if r_ == 0.0:
+            af = float(n_)
+        else:
+            if 1.0 + r_ <= 0.0:
+                return None
+            t = n_ * log1p(r_)          # log((1+r)^n)
+            if t > 700.0:
+                return None
+            af = (exp(t) - 1.0) / r_
+        if due_begin_ and r_ != 0.0:
+            af *= (1.0 + r_)
+        return af
+
+    def pow1pr_n(r_, n_):
+        """(1+r)^n を数値安定に計算。"""
+        if n_ == 0:
+            return 1.0
+        if 1.0 + r_ <= 0.0:
+            return None
+        t = n_ * log1p(r_)
+        if t > 700.0:
+            return None
+        return exp(t)
+
+    def build_balance_series(PV0, WD0, r_, n_, due_begin_):
+        """
+        月次残高の配列を返す。index=0 が初期残高（月0）。
+        end（後払い） : S_{k+1} = S_k*(1+r) - WD
+        begin（先払い）: S_{k+1} = (S_k - WD)*(1+r)
+        """
+        series = [max(0.0, PV0)]
+        S = PV0
+        for _ in range(n_):
+            if not due_begin_:
+                S = S * (1.0 + r_) - WD0
+            else:
+                S = (S - WD0) * (1.0 + r_)
+            series.append(S)
+        return series
+
+    def downsample_yearly(series):
+        """年次（12ヶ月ごと）に間引き。0年目含む。端数月があれば末尾も追加。"""
+        out = [series[i] for i in range(0, len(series), 12)]
+        if (len(series) - 1) % 12 != 0:
+            out.append(series[-1])
+        return out
+
+    if request.method == "POST":
+        solve    = (request.form.get("solve") or "withdrawal").strip()
+
+        PV       = parse_float(request.form.get("pv", "0"))            # 初期貯蓄
+        WD       = parse_float(request.form.get("withdrawal", "0"))    # 取崩月額
+        years    = parse_float(request.form.get("years", "0"))         # 取崩年数
+        annual   = parse_float(request.form.get("annual", "0"))        # 年率(%)
+        B        = parse_float(request.form.get("residual", "0"))      # 最終残存金額
+        due_str  = (request.form.get("due") or "end").strip()
         due_begin = (due_str == "begin")
 
-        # 軽いバリデーション
+        # 軽いバリデーション（エラーでも redirect せず再描画 → 入力保持）
         if annual < -100 or annual > 100:
             flash("利回り（年率）の範囲が不正です。", "danger")
             return render_template("drawdown.html", result=None)
@@ -450,106 +609,65 @@ def page_drawdown():
             flash("残存金額は0以上で入力してください。", "danger")
             return render_template("drawdown.html", result=None)
 
-        # 月数・月利
         n = int(round(years * 12)) if years > 0 else 0
         r = annual / 100.0 / 12.0  # 月利
 
-        def annuity_factor(r_, n_, due_begin_):
-            """AF(r,n,due): 将来価値換算の年金係数（支払の終価係数）。"""
-            if n_ <= 0:
-                return 0.0
-            if r_ == 0.0:
-                af = float(n_)
-            else:
-                if 1.0 + r_ <= 0.0:
-                    return None
-                t = n_ * log1p(r_)
-                if t > 700.0:
-                    return None
-                af = (exp(t) - 1.0) / r_
-            if due_begin_ and r_ != 0.0:
-                af *= (1.0 + r_)
-            return af
-
-        def pow1pr_n(r_, n_):
-            """(1+r)^n を数値安定に計算。"""
-            if n_ == 0:
-                return 1.0
-            if 1.0 + r_ <= 0.0:
-                return None
-            t = n_ * log1p(r_)
-            if t > 700.0:
-                return None
-            return exp(t)
-
         # ---- 各ケース ----
         if solve == "withdrawal":
-            # WD を解く
             if n <= 0:
                 flash("取崩年数を正の値で入力してください。", "danger")
                 return render_template("drawdown.html", result=None)
-            X = pow1pr_n(r, n)
+            X  = pow1pr_n(r, n)
             AF = annuity_factor(r, n, due_begin)
             if X is None or AF in (None, 0.0):
                 flash("計算が不安定です。入力値を見直してください。", "warning")
                 return render_template("drawdown.html", result=None)
-            if r == 0.0:
-                WD_req = (PV - B) / n
-            else:
-                WD_req = (PV * X - B) / AF
+            WD_req = (PV - B / X) / (AF / X) if r != 0.0 else (PV - B) / n
             result = {"solve": solve, "withdrawal": round(WD_req, 2), "n": n}
 
+            PV_eff, WD_eff, n_eff, r_eff, due_eff = PV, WD_req, n, r, due_begin
+
         elif solve == "pv":
-            # PV を解く
             if n <= 0:
                 flash("取崩年数を正の値で入力してください。", "danger")
                 return render_template("drawdown.html", result=None)
-            X = pow1pr_n(r, n)
+            X  = pow1pr_n(r, n)
             AF = annuity_factor(r, n, due_begin)
             if X is None or AF is None:
                 flash("計算が不安定です。入力値を見直してください。", "warning")
                 return render_template("drawdown.html", result=None)
-            if r == 0.0:
-                PV_req = B + WD * n
-            else:
-                PV_req = (B + WD * AF) / X
+            PV_req = (B + WD * AF) / X if r != 0.0 else (B + WD * n)
             result = {"solve": solve, "pv": round(PV_req, 2), "n": n}
 
+            PV_eff, WD_eff, n_eff, r_eff, due_eff = PV_req, WD, n, r, due_begin
+
         elif solve == "residual":
-            # B を解く
             if n <= 0:
                 flash("取崩年数を正の値で入力してください。", "danger")
                 return render_template("drawdown.html", result=None)
-            X = pow1pr_n(r, n)
+            X  = pow1pr_n(r, n)
             AF = annuity_factor(r, n, due_begin)
             if X is None or AF is None:
                 flash("計算が不安定です。入力値を見直してください。", "warning")
                 return render_template("drawdown.html", result=None)
-            if r == 0.0:
-                B_req = PV - WD * n
-            else:
-                B_req = PV * X - WD * AF
+            B_req = PV * X - WD * AF if r != 0.0 else (PV - WD * n)
             result = {"solve": solve, "residual": round(B_req, 2), "n": n}
 
+            PV_eff, WD_eff, n_eff, r_eff, due_eff = PV, WD, n, r, due_begin
+
         elif solve == "years":
-            # n（月数）を解く（解析解 / r=0 は線形）
             if WD <= 0:
                 flash("取崩月額は正の値で入力してください。", "danger")
                 return render_template("drawdown.html", result=None)
             if r == 0.0:
-                # B = PV - WD * n
                 n_real = (PV - B) / WD
                 if n_real < 0 or not isfinite(n_real):
                     flash("その条件では到達できません。", "warning")
                     return render_template("drawdown.html", result=None)
                 n_req = max(0, int(round(n_real)))
             else:
-                # 解析解：X=(1+r)^n
-                # end:   B = PV*X - WD*((X-1)/r)
-                #        → (PV - WD/r)X + (WD/r - B)=0 → X = (B - WD/r)/(PV - WD/r)
-                # begin: B = PV*X - WD*((X-1)/r)*(1+r)
-                #        → (PV - WD*(1+r)/r)X + (WD*(1+r)/r - B)=0
-                A = WD * ((1.0 + r) if due_begin else 1.0) / r
+                # 解析解で (1+r)^n = X を解き、n = log(X)/log(1+r)
+                A   = WD * ((1.0 + r) if due_begin else 1.0) / r
                 num = (B - A)
                 den = (PV - A)
                 if den == 0.0 or num <= 0.0 or den <= 0.0:
@@ -564,71 +682,69 @@ def page_drawdown():
                     flash("計算が不安定です。入力値を見直してください。", "warning")
                     return render_template("drawdown.html", result=None)
                 n_req = max(0, int(round(n_real)))
+
             result = {"solve": solve, "months": n_req, "years": round(n_req / 12.0, 3)}
 
+            PV_eff, WD_eff, n_eff, r_eff, due_eff = PV, WD, n_req, r, due_begin
+
         elif solve == "rate":
-            # r（月利）を解く（数値解）
             if WD <= 0 or n <= 0:
                 flash("取崩月額と取崩年数は正の値を入力してください。", "danger")
                 return render_template("drawdown.html", result=None)
 
-            # r=0 の基準（成否チェック）
             WD_r0 = (PV - B) / n
-            # r=0でちょうど一致
             if abs(WD - WD_r0) < 1e-12:
                 result = {"solve": solve, "monthly_rate_pct": 0.0, "annual_rate_pct": 0.0, "n": n}
-                return render_template("drawdown.html", result=result)
-
-            def WD_from(PV_, r_, n_, B_, due_begin_):
-                X = pow1pr_n(r_, n_)
-                AF = annuity_factor(r_, n_, due_begin_)
-                if X is None or AF in (None, 0.0):
-                    return None
-                if r_ == 0.0:
-                    return (PV_ - B_) / n_
-                return (PV_ * X - B_) / AF
-
-            def f(r_):
-                v = WD_from(PV, r_, n, B, due_begin)
-                if v is None or not isfinite(v):
-                    return None
-                return v - WD
-
-            # 0付近からの安全ブラケット探索
-            grid = [-0.5, -0.3, -0.2, -0.1, -0.05, 0.0, 0.05, 0.1, 0.2, 0.3, 0.5]
-            vals = []
-            for r_try in grid:
-                fv = f(r_try)
-                if fv is not None:
-                    vals.append((r_try, fv))
-
-            r_sol = None
-            # ゼロヒット
-            for r_try, fv in vals:
-                if abs(fv) < 1e-12:
-                    r_sol = r_try
-                    break
-            # 符号変化
-            bracket = None
-            if r_sol is None:
-                for i in range(len(vals) - 1):
-                    r1, f1 = vals[i]
-                    r2, f2 = vals[i + 1]
-                    if f1 * f2 <= 0:
-                        bracket = (r1, r2)
-                        break
-
-            if r_sol is None and bracket is None:
-                flash("与えられた条件では利回りの解が見つかりません。（金額や年数・残存額を見直してください）", "warning")
-                return render_template("drawdown.html", result=None)
-
-            if r_sol is None:
-                lo, hi = bracket
-                r_sol = bisection_solve(lambda x: f(x), lo, hi, tol=1e-12, max_iter=300)
-
-            if r_sol is None:
-                flash("解を特定できませんでした。入力値の整合性を見直してください。", "warning")
+                PV_eff, WD_eff, n_eff, r_eff, due_eff = PV, WD, n, 0.0, due_begin
+                # ↓ グラフ生成へ
             else:
+                def WD_from(PV_, r_, n_, B_, due_begin_):
+                    X  = pow1pr_n(r_, n_)
+                    AF = annuity_factor(r_, n_, due_begin_)
+                    if X is None or AF in (None, 0.0):
+                        return None
+                    return (PV_ * X - B_) / AF if r_ != 0.0 else (PV_ - B_) / n_
+
+                def f(r_):
+                    v = WD_from(PV, r_, n, B, due_begin)
+                    if v is None or not isfinite(v):
+                        return None
+                    return v - WD
+
+                # 0 近傍から安全にブラケット探索
+                grid = [-0.5, -0.3, -0.2, -0.1, -0.05, 0.0, 0.05, 0.1, 0.2, 0.3, 0.5]
+                vals = []
+                for r_try in grid:
+                    fv = f(r_try)
+                    if fv is not None:
+                        vals.append((r_try, fv))
+
+                r_sol = None
+                for r_try, fv in vals:
+                    if abs(fv) < 1e-12:
+                        r_sol = r_try
+                        break
+                bracket = None
+                if r_sol is None:
+                    for i in range(len(vals) - 1):
+                        r1, f1 = vals[i]
+                        r2, f2 = vals[i + 1]
+                        if f1 * f2 <= 0:
+                            bracket = (r1, r2)
+                            break
+
+                if r_sol is None and bracket is None:
+                    flash("与えられた条件では利回りの解が見つかりません。", "warning")
+                    return render_template("drawdown.html", result=None)
+
+                if r_sol is None:
+                    lo, hi = bracket
+                    r_sol = bisection_solve(lambda x: f(x), lo, hi, tol=1e-12, max_iter=300)
+
+                if r_sol is None:
+                    flash("解を特定できませんでした。入力値の整合性を見直してください。", "warning")
+                    return render_template("drawdown.html", result=None)
+
                 annual_pct = (((1.0 + r_sol) ** 12) - 1.0) * 100.0
                 result = {
                     "solve": solve,
@@ -636,12 +752,28 @@ def page_drawdown():
                     "annual_rate_pct": round(annual_pct, 6),
                     "n": n,
                 }
+                PV_eff, WD_eff, n_eff, r_eff, due_eff = PV, WD, n, r_sol, due_begin
+
         else:
             flash("解く対象（どれを求めるか）を選択してください。", "danger")
+            return render_template("drawdown.html", result=None)
+
+        # ---- 共通：グラフ用データを作成して result に添付 ----
+        try:
+            series_m = build_balance_series(PV_eff, WD_eff, r_eff, n_eff, due_eff)
+            series_y = downsample_yearly(series_m)
+            labels_y = [f"{i}年" for i in range(len(series_y))]
+            # 末尾ラベルを「最終」にする場合は以下に変更：
+            # if (len(series_m) - 1) % 12 != 0 and len(series_y) >= 2:
+            #     labels_y[-1] = "最終"
+            result["chart_labels"] = labels_y
+            result["chart_data"]   = [round(x, 2) for x in series_y]
+        except Exception:
+            # 作図失敗は致命的でないので、グラフは無視して結果のみ表示
+            result["chart_labels"] = []
+            result["chart_data"]   = []
 
     return render_template("drawdown.html", result=result)
-
-
 
 
 
